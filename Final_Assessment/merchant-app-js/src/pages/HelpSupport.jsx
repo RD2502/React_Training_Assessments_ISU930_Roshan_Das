@@ -19,6 +19,12 @@ export default function HelpSupport() {
   const [description, setDescription] = useState('');
   const [attachmentName, setAttachmentName] = useState('');
   const fileInputRef = useRef(null);
+  
+  // Dynamic Form States
+  const [dynamicFields, setDynamicFields] = useState(null);
+  const [formValues, setFormValues] = useState({});
+  const [isFormLoading, setIsFormLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const initialTickets = Array.from({length: 55}).map((_, i) => ({
     txId: `12387191632${90 + i}`,
@@ -164,15 +170,88 @@ export default function HelpSupport() {
     }
   };
 
-  const handleTicketSubmit = () => {
-    if (!reason || !txId) {
-      alert('Please fill out the Reason and Transaction ID');
+  const handleTicketSubmit = async () => {
+    let mappedReason = reason;
+    let mappedTxId = txId;
+    let mappedDescription = description;
+    
+    // Zendesk Submission Payload Variables
+    let zendeskSubject = "Ticket Submission";
+    let zendeskDescription = description || "No Description";
+    const custom_fields_payload = [];
+
+    // Use dynamic form values if schema is loaded
+    if (dynamicFields) {
+      dynamicFields.forEach(field => {
+        const val = formValues[field.id];
+        if (!val) return;
+        
+        const label = field.title.toLowerCase();
+        
+        // Populate standard mapped strings for the Local Table Grid
+        if (label.includes('reason') || label.includes('operation') || label.includes('issue type')) {
+          mappedReason = field.custom_field_options ? (field.custom_field_options.find(o => o.value === val)?.name || val) : val;
+        }
+        if (label.includes('id') || label.includes('dnis') || label.includes('vpa')) {
+          mappedTxId = val;
+        }
+        if (label.includes('description')) {
+          mappedDescription = val;
+        }
+
+        // Populate external Zendesk Integration array
+        // "Subject" and "Body/Description" are routed distinctively by Zendesk
+        if (field.type === 'subject') {
+           zendeskSubject = val;
+           if (!mappedReason) mappedReason = val; // fallback for Table rendering
+        } else if (field.type === 'description' || field.type === 'textarea') {
+           zendeskDescription = val;
+        }
+        
+        // Push all matching KV to custom fields directly!
+        custom_fields_payload.push({
+           id: field.id,
+           value: val
+        });
+      });
+    }
+
+    if (!mappedReason) {
+      alert('Please fill out the Issue Type or Subject field');
       return;
     }
+    
+    // Fallback ID if not provided by user
+    if (!mappedTxId) mappedTxId = 'N/A';
+
+    setIsSubmitting(true);
+
+    try {
+      // Construction wrapper targeting exactly the provided layout request
+      const rawZendeskPayload = {
+        body: zendeskDescription,
+        subject: zendeskSubject,
+        custom_fields: custom_fields_payload,
+        ticket_form_id: 47501075391257,
+        attachmentName: attachmentName ? [attachmentName] : [],
+        attachmentURL: [] 
+      };
+
+      // Perform End-to-End Encrypted POST securely
+      const result = await ApiService.createTicket(rawZendeskPayload);
+      if (result) {
+         console.log("Encrypted Zendesk Submit Success", result);
+      }
+    } catch(err) {
+      console.error("Zendesk Encrypted Transaction Failed Locally", err);
+    }
+    
+    setIsSubmitting(false);
+
     const today = new Date().toISOString().split('T')[0];
     const timeStr = new Date().toLocaleTimeString('en-US');
     const generatedTicketId = Date.now().toString();
-    const newTicket = { txId: generatedTicketId, transactionId: txId, description, operation: reason, number: '+91 0000000000', status: 'Pending', date: today, raisedOn: `${today}, ${timeStr}` };
+    const newTicket = { txId: generatedTicketId, transactionId: mappedTxId, description: mappedDescription, operation: mappedReason, number: '+91 0000000000', status: 'Pending', date: today, raisedOn: `${today}, ${timeStr}` };
     setTickets([newTicket, ...tickets]);
     
     // Reset & Close
@@ -180,7 +259,38 @@ export default function HelpSupport() {
     setTxId('');
     setDescription('');
     setAttachmentName('');
+    setFormValues({});
     setShowRaiseTicket(false);
+  };
+
+  const handleOpenRaiseTicket = async () => {
+    setShowRaiseTicket(true);
+    if (!dynamicFields) {
+      setIsFormLoading(true);
+      try {
+        const body = {
+          "index": "zendesk_form",
+          "type": "em",
+          "query": { "query": { "nested": { "path": "forms", "query": { "bool": { "must": [ { "match": { "forms.id": 47501075391257 } } ] } } } } }
+        };
+        const response = await fetch('/elastic-api/isu/elastic/fetch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const json = await response.json();
+        const hits = json.data?.hits || [];
+        if (hits.length > 0) {
+          const formData = hits[0]._source.forms[0];
+          const allFields = formData.ticket_fields || [];
+          const portalFields = allFields.filter(f => f.visible_in_portal);
+          setDynamicFields(portalFields);
+        }
+      } catch (err) {
+        console.error('Failed to fetch dynamic form', err);
+      }
+      setIsFormLoading(false);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -196,7 +306,7 @@ export default function HelpSupport() {
     <div>
       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24}}>
         <h1 style={{marginBottom: 0, cursor: 'pointer'}} onClick={() => setSelectedTicket(null)}>Help & Support</h1>
-        <button className="btn-primary" onClick={() => setShowRaiseTicket(true)}>Raise a ticket</button>
+        <button className="btn-primary" onClick={handleOpenRaiseTicket}>Raise a ticket</button>
       </div>
 
       {selectedTicket ? (
@@ -441,32 +551,63 @@ export default function HelpSupport() {
           <button 
             onClick={() => setShowRaiseTicket(false)} 
             style={{background: 'transparent', border: 'none', color: '#ef4444', fontWeight: 500, cursor: 'pointer'}}
+            disabled={isSubmitting}
           >
             Cancel
           </button>
-          <button className="btn-primary" onClick={handleTicketSubmit}>Submit</button>
+          <button className="btn-primary" onClick={handleTicketSubmit} disabled={isFormLoading || isSubmitting}>
+            {isSubmitting ? 'Submitting...' : 'Submit'}
+          </button>
         </div>
       }>
-        <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
-          <div>
-            <label className="input-label" style={{display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: 'var(--text-main)'}}>Reason</label>
-            <select className="input-field" style={{width: '100%'}} value={reason} onChange={(e) => setReason(e.target.value)}>
-              <option value="">Please Select Reason</option>
-              <option value="Transaction Declined">Transaction Declined</option>
-              <option value="Failed but deducted">Failed but deducted</option>
-              <option value="Refund not received">Refund not received</option>
-              <option value="App crashed on pay">App crashed on pay</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div>
-            <label className="input-label" style={{display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: 'var(--text-main)'}}>Transaction ID</label>
-            <input className="input-field" style={{width: '100%'}} placeholder="Enter the Transaction ID" value={txId} onChange={(e) => setTxId(e.target.value)} />
-          </div>
-          <div>
-            <label className="input-label" style={{display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: 'var(--text-main)'}}>Description</label>
-            <textarea className="input-field" style={{width: '100%'}} rows="3" placeholder="Any additional details..." value={description} onChange={(e) => setDescription(e.target.value)}></textarea>
-          </div>
+        <div style={{display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '60vh', overflowY: 'auto', paddingRight: 8}}>
+          {isFormLoading ? (
+            <div style={{padding: '32px 0', textAlign: 'center', color: '#94a3b8', fontSize: '1rem', fontWeight: 500}}>
+               Loading Dynamic Form Schema...
+            </div>
+          ) : dynamicFields ? (
+            dynamicFields.map(field => (
+              <div key={field.id}>
+                <label className="input-label" style={{display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: 'var(--text-main)'}}>
+                  {field.title} {field.required && '*'}
+                </label>
+                {field.type === 'tagger' ? (
+                  <select className="input-field" style={{width: '100%'}} value={formValues[field.id] || ''} onChange={(e) => setFormValues({...formValues, [field.id]: e.target.value})}>
+                    <option value="">Please Select {field.title}</option>
+                    {field.custom_field_options?.map(opt => <option key={opt.value} value={opt.value}>{opt.name}</option>)}
+                  </select>
+                ) : (field.type === 'textarea' || field.type === 'description') ? (
+                  <textarea className="input-field" style={{width: '100%'}} rows="3" placeholder={`Enter ${field.title}...`} value={formValues[field.id] || ''} onChange={(e) => setFormValues({...formValues, [field.id]: e.target.value})}></textarea>
+                ) : (field.type === 'integer' || field.type === 'decimal') ? (
+                  <input type="number" className="input-field" style={{width: '100%'}} placeholder={`Enter ${field.title}...`} value={formValues[field.id] || ''} onChange={(e) => setFormValues({...formValues, [field.id]: e.target.value})} />
+                ) : (
+                  <input type="text" className="input-field" style={{width: '100%'}} placeholder={`Enter ${field.title}...`} value={formValues[field.id] || ''} onChange={(e) => setFormValues({...formValues, [field.id]: e.target.value})} />
+                )}
+              </div>
+            ))
+          ) : (
+            <>
+              <div>
+                <label className="input-label" style={{display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: 'var(--text-main)'}}>Reason</label>
+                <select className="input-field" style={{width: '100%'}} value={reason} onChange={(e) => setReason(e.target.value)}>
+                  <option value="">Please Select Reason</option>
+                  <option value="Transaction Declined">Transaction Declined</option>
+                  <option value="Failed but deducted">Failed but deducted</option>
+                  <option value="Refund not received">Refund not received</option>
+                  <option value="App crashed on pay">App crashed on pay</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="input-label" style={{display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: 'var(--text-main)'}}>Transaction ID</label>
+                <input className="input-field" style={{width: '100%'}} placeholder="Enter the Transaction ID" value={txId} onChange={(e) => setTxId(e.target.value)} />
+              </div>
+              <div>
+                <label className="input-label" style={{display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: 'var(--text-main)'}}>Description</label>
+                <textarea className="input-field" style={{width: '100%'}} rows="3" placeholder="Any additional details..." value={description} onChange={(e) => setDescription(e.target.value)}></textarea>
+              </div>
+            </>
+          )}
           <div>
             <label className="input-label" style={{display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: 'var(--text-main)'}}>Attachment</label>
             <div 

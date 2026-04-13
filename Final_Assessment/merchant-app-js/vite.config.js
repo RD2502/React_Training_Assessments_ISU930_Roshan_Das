@@ -22,6 +22,11 @@ export default defineConfig({
         headers: {
           'User-Agent': 'PostmanRuntime/7.39.0'
         }
+      },
+      '/elastic-api': {
+        target: 'https://services.txninfra.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/elastic-api/, '')
       }
     }
   }

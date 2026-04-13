@@ -4,7 +4,7 @@ const authConfig = {
     authority: 'https://cboi-auth-stage.isupay.in/application/o/merchant-web-application/',
     client_id: '02WnEFxSElzxzrv3Qht29IacaiO6qKa3pclXleoo',
     redirect_uri: window.location.origin + '/callback',
-    // post_logout_redirect_uri: window.location.origin + '/login', // removed to prevent auto-redirect loop after logout
+    post_logout_redirect_uri: window.location.origin + '/logged-out',
     response_type: 'code',
     scope: 'openid profile email offline_access authorities privileges user_name created adminName bankCode goauthentik.io/api',
     automaticSilentRenew: true,

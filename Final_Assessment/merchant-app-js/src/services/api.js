@@ -214,5 +214,46 @@ export const ApiService = {
     await delay(500);
     currentUserLanguage = langCode;
     return true;
+  },
+
+  createTicket: async (formPayload) => {
+    try {
+      const accessToken = localStorage.getItem('access_token') || '';
+      
+      // 1. Encrypt Payload natively via local module Engine
+      const encrResponse = await fetch('/encr-api/encr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'key': ENCR_DECR_KEY },
+        body: JSON.stringify(formPayload)
+      });
+      const encrData = await encrResponse.json();
+      const encryptedString = encrData.RequestData || encrData;
+
+      // 2. Transmit string payload bypassing CORS through the Vite local proxy routing securely
+      const mainResponse = await fetch('/txn-api/encrV4/CBOI/zendesk/v2/createTicket', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'pass_key': PASS_KEY,
+          'Authorization': accessToken
+        },
+        body: JSON.stringify({ RequestData: encryptedString })
+      });
+      
+      const encryptedMainData = await mainResponse.json();
+      const stringToDecrypt = encryptedMainData.data || encryptedMainData;
+
+      // 3. Decrypt remote proxy response stream back securely to unencrypted text object
+      const decrResponse = await fetch('/encr-api/decr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'key': ENCR_DECR_KEY },
+        body: JSON.stringify({ req: stringToDecrypt.ResponseData || stringToDecrypt })
+      });
+      
+      return await decrResponse.json();
+    } catch (err) {
+      console.error('Remote ticket encrypted submission pipeline failure:', err);
+      return null;
+    }
   }
 };

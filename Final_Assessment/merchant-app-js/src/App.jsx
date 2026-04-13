@@ -8,6 +8,7 @@ import QRPage from './pages/QRPage';
 import LanguageUpdate from './pages/LanguageUpdate';
 import HelpSupport from './pages/HelpSupport';
 import Callback from './pages/Callback';
+import LoggedOut from './pages/LoggedOut';
 
 const LoginRedirect = () => {
   useEffect(() => {
@@ -32,6 +33,7 @@ function App() {
       <Routes>
         <Route path="/login" element={<LoginRedirect />} />
         <Route path="/callback" element={<Callback />} />
+        <Route path="/logged-out" element={<LoggedOut />} />
         
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
